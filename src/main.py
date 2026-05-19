@@ -8,6 +8,12 @@ import httpx
 from mcp.server.fastmcp import FastMCP
 
 from jimeng_client import AuthRequiredException, JiMengClient, load_config
+from jimeng_api import (
+    JiMengAPIClient,
+    JiMengAPIError,
+    InsufficientCreditsError,
+    ContentFilteredError,
+)
 from utils import download_image
 
 logging.basicConfig(
@@ -144,11 +150,6 @@ async def generate_game_asset(prompt: str, output_path: str | None = None) -> st
     **Returns:**
         A status message with the local file path and the source URL.
     """
-    cdp_url = _config.get("cdp_url", "http://localhost:9222")
-    task_timeout = _config.get("task_timeout", 60)
-    headless = _config.get("headless", False)
-    cookie = _config.get("cookie")
-
     if not output_path:
         safe_name = "".join(c if c.isalnum() or c in " _-" else "_" for c in prompt)
         safe_name = safe_name.strip()[:80] or "image"
@@ -156,6 +157,35 @@ async def generate_game_asset(prompt: str, output_path: str | None = None) -> st
             _config.get("default_output_dir", "./downloads"),
             safe_name + ".png",
         )
+
+    cookie = _config.get("cookie")
+
+    # ── Strategy 1: Direct API (fast, reliable, no browser) ──
+    if cookie:
+        try:
+            logger.info("API mode: generating via direct REST API …")
+            api_client = JiMengAPIClient(cookie=cookie)
+            image_url = await api_client.generate(prompt)
+            logger.info("API image URL: %s", image_url)
+
+            success = await download_image(image_url, output_path)
+            if not success:
+                return f"【错误】图片下载失败，请检查网络后重试。图片 URL: {image_url}"
+
+            return f"【成功】图片已生成并保存至: {output_path}\n图片 URL: {image_url}"
+
+        except InsufficientCreditsError:
+            return "【错误】即梦积分不足，请前往 https://jimeng.jianying.com 充值或领取每日积分。"
+        except ContentFilteredError:
+            return "【错误】提示词被内容过滤器拦截，请修改后重试。"
+        except JiMengAPIError as e:
+            logger.warning("API generation failed: %s — falling back to browser mode.", e)
+            # Fall through to browser automation
+
+    # ── Strategy 2: Browser automation (robust fallback) ──
+    cdp_url = _config.get("cdp_url", "http://localhost:9222")
+    task_timeout = _config.get("task_timeout", 60)
+    headless = _config.get("headless", False)
 
     client = JiMengClient(
         cdp_url=cdp_url,
@@ -167,9 +197,9 @@ async def generate_game_asset(prompt: str, output_path: str | None = None) -> st
     )
 
     try:
-        logger.info("Starting image generation for prompt: %s", prompt)
+        logger.info("Browser mode: generating via Playwright UI automation …")
         image_url = await client.generate(prompt)
-        logger.info("Image URL obtained: %s", image_url)
+        logger.info("Browser image URL: %s", image_url)
 
         success = await download_image(image_url, output_path)
         if not success:
@@ -178,10 +208,6 @@ async def generate_game_asset(prompt: str, output_path: str | None = None) -> st
         return f"【成功】图片已生成并保存至: {output_path}\n图片 URL: {image_url}"
 
     except AuthRequiredException:
-        if headless:
-            return (
-                "【错误】Cookie 登录态已失效，请更新 JIMENG_COOKIE 环境变量后重试。"
-            )
         return "【错误】您的宿主浏览器即梦登录状态已失效，请在 Chrome 中完成扫码登录后重试。"
     except RuntimeError as e:
         msg = str(e)
