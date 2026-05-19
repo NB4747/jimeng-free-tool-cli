@@ -1,0 +1,11 @@
+{
+    "cdp_url": "http://localhost:9222",
+    "default_output_dir": "./downloads",
+    "task_timeout": 60,
+    "api_patterns": [
+        "api/v1/task",
+        "text2img/action",
+        "api/task"
+    ],
+    "poll_interval": 1.0
+}

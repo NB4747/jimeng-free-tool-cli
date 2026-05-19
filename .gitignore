@@ -1,0 +1,9 @@
+downloads/
+__pycache__/
+*.pyc
+.env
+repo.json
+generate_cyberpunk.py
+*.png
+*.jpg
+*.webp
