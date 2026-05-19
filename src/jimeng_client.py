@@ -320,9 +320,40 @@ class JiMengClient:
     # ------------------------------------------------------------------
 
     async def _ensure_image_gen_mode(self):
-        """Step 1-2: Switch mode dropdown from Agent to 图片生成."""
+        """Step 1-2: Switch mode from Agent to 图片生成.
+
+        Handles two UI variants:
+        - New UI: horizontal tab bar (type-home-select-option-label)
+        - Old UI: lv-select dropdown (lv-select-view-value)
+        """
         logger.info("Step 1-2: Checking mode selector …")
-        # The mode switcher shows current mode text like "Agent 模式" or "图片生成"
+
+        # ── Variant A: new horizontal tab bar ──
+        tab = self._page.locator(".type-home-select-option-label-EnBX64").filter(has_text="图片生成").first
+        if await tab.is_visible():
+            # Check if already selected by looking at parent's active state
+            parent = self._page.locator(".home-type-select-option-NO0IB5")
+            for i in range(await parent.count()):
+                p = parent.nth(i)
+                text = (await p.text_content() or "").strip()
+                if "图片生成" not in text:
+                    continue
+                classes = await p.get_attribute("class") or ""
+                if "active" in classes or "selected" in classes:
+                    logger.info("Already in 图片生成 mode (tab UI).")
+                    return
+                # Click via JS to bypass header overlay
+                await p.evaluate("el => el.click()")
+                logger.info("Mode switched to 图片生成 (tab UI).")
+                await self._page.wait_for_timeout(1000)
+                return
+            # Fallback: click the label directly via JS
+            await tab.evaluate("el => el.click()")
+            logger.info("Mode switched to 图片生成 (tab label).")
+            await self._page.wait_for_timeout(1000)
+            return
+
+        # ── Variant B: old dropdown UI ──
         mode_values = self._page.locator(".lv-select-view-value")
         for i in range(await mode_values.count()):
             el = mode_values.nth(i)
@@ -332,36 +363,40 @@ class JiMengClient:
             if not any(kw in text for kw in ("Agent", "图片生成", "视频生成")):
                 continue
             if "图片生成" in text:
-                logger.info("Already in 图片生成 mode.")
+                logger.info("Already in 图片生成 mode (dropdown UI).")
                 return
-            # Click to open dropdown and select 图片生成
             logger.info("Switching mode from '%s' to 图片生成 …", text)
             await el.click()
             await self._page.wait_for_timeout(800)
-            # Step 2: click 图片生成 option (use .select-option-label-content)
             option = self._page.locator(".select-option-label-content").filter(has_text="图片生成").first
             await option.click()
-            logger.info("Mode switched to 图片生成.")
+            logger.info("Mode switched to 图片生成 (dropdown UI).")
             await self._page.wait_for_timeout(1000)
             return
+
         logger.info("Mode selector not found, proceeding anyway.")
 
     async def _ensure_model_selection(self):
-        """Step 3-4: Select the image model (e.g. 图片5.0 Lite) if not already."""
+        """Step 3-4: Select the image model (e.g. 图片5.0 Lite) if not already.
+
+        This step is best-effort — the new tab UI may pre-select a model.
+        """
         logger.info("Step 3-4: Checking model selection …")
         await self._page.wait_for_timeout(500)
         model_select = self._page.locator(self._MODEL_SELECTOR).nth(1)
         if not await model_select.is_visible():
-            logger.info("Model selector not visible, skipping.")
+            logger.info("Model selector not visible, skipping (may be pre-selected).")
             return
-        await model_select.click()
-        await self._page.wait_for_timeout(500)
-        # Click the selected/first model option
-        option = self._page.locator(".lv-select-option-wrapper-selected .select-option-label-content").first
-        if not await option.is_visible():
-            option = self._page.locator(".select-option-label-content").first
-        await option.click()
-        logger.info("Model selected.")
+        try:
+            await model_select.click(timeout=3000)
+            await self._page.wait_for_timeout(500)
+            option = self._page.locator(".lv-select-option-wrapper-selected .select-option-label-content").first
+            if not await option.is_visible():
+                option = self._page.locator(".select-option-label-content").first
+            await option.click(timeout=3000)
+            logger.info("Model selected.")
+        except Exception:
+            logger.info("Model selection skipped (timeout or not needed).")
         await self._page.wait_for_timeout(500)
 
     async def _fill_prompt(self, prompt: str):
