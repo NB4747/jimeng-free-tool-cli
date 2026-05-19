@@ -19,6 +19,31 @@ class JiMengClient:
     generation on jimeng.jianying.com."""
 
     _JIMENG_DOMAIN = "jimeng.jianying.com"
+    _COOKIE_DOMAIN = ".jianying.com"
+
+    @staticmethod
+    def _parse_cookie_string(raw: str) -> list[dict]:
+        """Parse a raw cookie header string into Playwright cookie objects.
+
+        Supports::
+
+            "name=value"
+            "name1=value1; name2=value2; ..."
+        """
+        cookies = []
+        for part in raw.split(";"):
+            part = part.strip()
+            if "=" not in part:
+                continue
+            name, _, value = part.partition("=")
+            cookies.append({
+                "name": name.strip(),
+                "value": value.strip(),
+                "domain": JiMengClient._COOKIE_DOMAIN,
+                "path": "/",
+            })
+        return cookies
+
     _AUTH_SELECTORS = [
         'text="登录"',
         'text="注册"',
@@ -45,6 +70,8 @@ class JiMengClient:
         api_url_patterns: Optional[list[str]] = None,
         task_timeout: float = 60.0,
         poll_interval: float = 1.0,
+        headless: bool = False,
+        cookie: Optional[str] = None,
     ):
         self._cdp_url = cdp_url
         self._api_patterns = api_url_patterns or [
@@ -58,6 +85,8 @@ class JiMengClient:
         ]
         self._task_timeout = task_timeout
         self._poll_interval = poll_interval
+        self._headless = headless
+        self._cookie = cookie
 
         # Runtime state
         self._captured_image_url: Optional[str] = None
@@ -65,6 +94,7 @@ class JiMengClient:
         self._browser = None
         self._context = None
         self._page: Optional[Page] = None
+        self._playwright = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -94,38 +124,62 @@ class JiMengClient:
             self._url_event = None
 
     async def close(self):
-        """Dispose Playwright resources (keep the browser open)."""
-        if self._context:
-            # We don't close the browser — the user owns the process.
-            pass
+        """Dispose Playwright resources."""
+        if self._headless and self._browser:
+            await self._browser.close()
+        if self._headless and self._playwright:
+            await self._playwright.stop()
         self._page = None
         self._context = None
         self._browser = None
+        self._playwright = None
 
     # ------------------------------------------------------------------
     # Internal: connection & navigation
     # ------------------------------------------------------------------
 
     async def _connect(self):
-        logger.info("Connecting to Chrome CDP at %s", self._cdp_url)
-        try:
-            playwright = await async_playwright().start()
-            self._browser = await playwright.chromium.connect_over_cdp(self._cdp_url)
-        except Exception as exc:
-            raise RuntimeError(
-                "Cannot connect to Chrome at %s. "
-                "Is it running with --remote-debugging-port?"
-                % self._cdp_url
-            ) from exc
+        self._playwright = await async_playwright().start()
+        if self._headless:
+            logger.info("Launching headless Chrome via Playwright …")
+            self._browser = await self._playwright.chromium.launch(headless=True)
+        else:
+            logger.info("Connecting to Chrome CDP at %s", self._cdp_url)
+            try:
+                self._browser = await self._playwright.chromium.connect_over_cdp(self._cdp_url)
+            except Exception as exc:
+                raise RuntimeError(
+                    "Cannot connect to Chrome at %s. "
+                    "Is it running with --remote-debugging-port?"
+                    % self._cdp_url
+                ) from exc
 
     async def _navigate_to_jimeng(self):
-        """Reuse an existing jimeng tab, navigating to the home page."""
+        """Navigate to jimeng home page."""
+        if self._headless:
+            # Create fresh context with cookie injection
+            self._context = await self._browser.new_context()
+            if self._cookie:
+                cookies_to_set = self._parse_cookie_string(self._cookie)
+                await self._context.add_cookies(cookies_to_set)
+                logger.info(
+                    "Injected %d cookie(s) into headless browser context.",
+                    len(cookies_to_set),
+                )
+            self._page = await self._context.new_page()
+            await self._page.goto(
+                "https://jimeng.jianying.com/ai-tool/home/",
+                wait_until="domcontentloaded",
+            )
+            await self._page.wait_for_timeout(2000)
+            return
+
+        # CDP mode: reuse existing tab
         self._context = self._browser.contexts[0]
         for page in self._context.pages:
             if self._JIMENG_DOMAIN in (page.url or ""):
                 logger.info("Reusing existing jimeng tab: %s", page.url)
                 await page.bring_to_front()
-                # Always navigate to home for a consistent start
                 if "/ai-tool/home/" not in (page.url or ""):
                     await page.goto(
                         "https://jimeng.jianying.com/ai-tool/home/",
@@ -150,6 +204,10 @@ class JiMengClient:
                     selector, timeout=3000, state="attached"
                 )
                 if el:
+                    if self._headless:
+                        raise AuthRequiredException(
+                            "Cookie 登录态已失效，请更新 JIMENG_COOKIE 环境变量后重试。"
+                        )
                     raise AuthRequiredException(
                         "登录状态已失效，请在 Chrome 中完成扫码登录后重试。"
                     )

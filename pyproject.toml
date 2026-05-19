@@ -1,0 +1,20 @@
+[project]
+name = "jimeng-mcp-bridge"
+version = "0.1.0"
+description = "基于 Playwright CDP 的即梦（jimeng.jianying.com）文本生图 MCP 服务"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=1.27.0",
+    "playwright>=1.59.0",
+    "httpx>=0.28.0",
+]
+
+[project.scripts]
+jimeng-mcp = "src.main:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["src"]
