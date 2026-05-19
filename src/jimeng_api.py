@@ -227,7 +227,7 @@ class JiMengAPIClient:
             self._model, ratio, resolution, width, height,
         )
 
-        aigc_data = await self._request(
+        result = await self._request(
             "POST", "/mweb/v1/aigc_draft/generate",
             params={
                 "da_version": DRAFT_VERSION,
@@ -236,6 +236,7 @@ class JiMengAPIClient:
             },
             data=request_data,
         )
+        aigc_data = result.get("aigc_data", result)
         history_id = aigc_data.get("history_record_id")
         if not history_id:
             raise JiMengAPIError("No history_record_id in response")
@@ -248,14 +249,15 @@ class JiMengAPIClient:
         data = await self._request(
             "POST", "/commerce/v1/benefits/user_credit", data={}
         )
+        credit = data.get("credit", data)
         return {
-            "gift": data.get("gift_credit", 0),
-            "purchase": data.get("purchase_credit", 0),
-            "vip": data.get("vip_credit", 0),
+            "gift": credit.get("gift_credit", 0),
+            "purchase": credit.get("purchase_credit", 0),
+            "vip": credit.get("vip_credit", 0),
             "total": sum((
-                data.get("gift_credit", 0),
-                data.get("purchase_credit", 0),
-                data.get("vip_credit", 0),
+                credit.get("gift_credit", 0),
+                credit.get("purchase_credit", 0),
+                credit.get("vip_credit", 0),
             )),
         }
 
