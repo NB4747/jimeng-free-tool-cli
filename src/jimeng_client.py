@@ -319,6 +319,11 @@ class JiMengClient:
     # Internal: UI interaction
     # ------------------------------------------------------------------
 
+    async def _click(self, locator, timeout: int = 3000):
+        """Click via JS to bypass pointer-event interception (overlays, headers)."""
+        await locator.wait_for(state="visible", timeout=timeout)
+        await locator.evaluate("el => el.click()")
+
     async def _ensure_image_gen_mode(self):
         """Step 1-2: Switch mode from Agent to 图片生成.
 
@@ -366,10 +371,10 @@ class JiMengClient:
                 logger.info("Already in 图片生成 mode (dropdown UI).")
                 return
             logger.info("Switching mode from '%s' to 图片生成 …", text)
-            await el.click()
+            await self._click(el)
             await self._page.wait_for_timeout(800)
             option = self._page.locator(".select-option-label-content").filter(has_text="图片生成").first
-            await option.click()
+            await self._click(option)
             logger.info("Mode switched to 图片生成 (dropdown UI).")
             await self._page.wait_for_timeout(1000)
             return
@@ -388,12 +393,12 @@ class JiMengClient:
             logger.info("Model selector not visible, skipping (may be pre-selected).")
             return
         try:
-            await model_select.click(timeout=3000)
+            await self._click(model_select, timeout=3000)
             await self._page.wait_for_timeout(500)
             option = self._page.locator(".lv-select-option-wrapper-selected .select-option-label-content").first
             if not await option.is_visible():
                 option = self._page.locator(".select-option-label-content").first
-            await option.click(timeout=3000)
+            await self._click(option, timeout=3000)
             logger.info("Model selected.")
         except Exception:
             logger.info("Model selection skipped (timeout or not needed).")
@@ -404,14 +409,13 @@ class JiMengClient:
         logger.info("Step 5-8: Filling prompt …")
         editor = self._page.locator(self._EDITOR_SELECTOR).first
         await editor.wait_for(state="visible", timeout=5000)
-        # Click the empty placeholder to focus
+        # Click the placeholder to focus (JS click to bypass overlay)
         placeholder = editor.locator("p.is-editor-empty").first
         if await placeholder.is_visible():
-            await placeholder.click()
+            await self._click(placeholder)
         else:
-            await editor.click()
+            await self._click(editor)
         await self._page.wait_for_timeout(300)
-        # Clear existing content and type
         await editor.press("Control+a")
         await editor.press("Backspace")
         await self._page.keyboard.type(prompt, delay=20)
@@ -421,13 +425,12 @@ class JiMengClient:
         """Step 9: Click the generate button in toolbar."""
         logger.info("Step 9: Clicking generate button …")
         btn = self._page.locator(self._GENERATE_SELECTOR).first
-        # Wait for button to be enabled (not disabled by empty prompt)
         for _ in range(30):
             disabled = await btn.get_attribute("disabled")
             if disabled is None:
                 break
             await self._page.wait_for_timeout(500)
-        await btn.click()
+        await self._click(btn)
         logger.info("Generate button clicked.")
 
     # ------------------------------------------------------------------
@@ -459,7 +462,7 @@ class JiMengClient:
         # Step 10: Click download icon on the first result card
         icon = self._page.locator(self._DOWNLOAD_ICON).first
         if await icon.is_visible():
-            await icon.click()
+            await self._click(icon)
             logger.info("Step 10: Download icon clicked.")
             await self._page.wait_for_timeout(800)
         else:
@@ -468,10 +471,9 @@ class JiMengClient:
         # Step 11: Toggle HD switch if present
         hd_switch = self._page.locator(self._HD_SWITCH).first
         if await hd_switch.is_visible():
-            # Check if it's already on; if not, toggle it
             checked = await hd_switch.get_attribute("aria-checked")
             if checked != "true":
-                await hd_switch.click()
+                await self._click(hd_switch)
                 logger.info("Step 11: HD switch toggled.")
                 await self._page.wait_for_timeout(300)
         else:
@@ -483,7 +485,6 @@ class JiMengClient:
 
         async def _capture_download(response):
             url = response.url
-            # Look for image download responses
             if any(x in url for x in ("dreamina-sign", "byteimg.com")) and \
                any(x in url for x in ("resize", ".image", ".png", ".jpeg", ".webp")):
                 download_url.append(url)
@@ -494,7 +495,7 @@ class JiMengClient:
         # Step 12: Click final download button
         download_btn = self._page.locator(self._DOWNLOAD_BTN).first
         if await download_btn.is_visible():
-            await download_btn.click()
+            await self._click(download_btn)
             logger.info("Step 12: Download button clicked.")
         else:
             logger.warning("Download button not visible.")
