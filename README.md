@@ -1,128 +1,375 @@
-# jimeng-mcp
+# jimeng-free-tool-cli
 
-> 即梦 AI × Claude Code —— 让 AI 助手直接调用即梦进行文生图、美术素材创作的 MCP 插件。
+> 即梦 AI 免费工具 CLI — 文生图 / 图生图 / 视频生成 / 资产管理一体化命令行工具
 
-无需 API Key，无需付费接口。利用 Playwright CDP 接管本地浏览器，全自动操作即梦网页端完成图片生成与下载。
+无需 API Key，无需付费接口。通过即梦 Cookie 调用官方 REST API，支持 6 款图像模型、5 款视频模型，2K 高清输出，带完整的游戏资产后处理管线。
 
 ---
 
-## 🚀 极致安装体验（一行命令）
+## 目录
 
-**不需要克隆项目，不需要手动安装依赖。** 只要电脑里有 [`uv`](https://docs.astral.sh/uv/) 和 Chrome 浏览器：
+- [功能矩阵](#功能矩阵)
+- [前置条件](#前置条件)
+- [快速开始](#快速开始)
+- [Claude Code MCP 部署](#claude-code-mcp-部署)
+- [Python SDK 用法](#python-sdk-用法)
+- [游戏资产后处理](#游戏资产后处理)
+- [上传引擎](#上传引擎)
+- [多账号轮询](#多账号轮询)
+- [配置参考](#配置参考)
+- [项目结构](#项目结构)
+- [常见问题](#常见问题)
+
+---
+
+## 功能矩阵
+
+| 能力 | MCP 工具名 | SDK 方法 |
+|------|-----------|----------|
+| 文生图 | `generate_game_asset` | `client.generate_image()` |
+| 图生图 | `generate_image_variation` | `client.generate_image_to_image()` |
+| 文生视频 | `generate_video_asset` | `client.generate_video()` |
+| 图生视频 | `generate_video_with_frames` | `client.generate_video_with_frames()` |
+| 图片上传 | — | `client.upload_image()` |
+| 积分查询 | — | `client.get_credits()` |
+| 去背 | — | `asset_processor.remove_background()` |
+| 缩放 | — | `asset_processor.resize_to_game_standard()` |
+
+### 图像模型
+
+| 模型 | 分辨率 | 说明 |
+|------|:------:|------|
+| `4.5` | 2K/1K | 最新旗舰，最高质量 |
+| `4.1` | 2K/1K | 高质量通用 |
+| `4.0` | 2K/1K | 高性能 |
+| `3.1` | 1K | 艺术风格增强 |
+| `3.0` | 1K | 经济模式（推荐测试用） |
+| `2.0-pro` | 1K | 轻量快速 |
+
+### 视频模型
+
+| 模型 | 分辨率 | 时长 |
+|------|:------:|:----:|
+| `3.0-pro` | 1080p/720p/480p | 5s/10s |
+| `3.0` | 720p/480p | 5s/10s |
+| `3.0-fast` | 720p/480p | 5s/10s |
+| `s2.0` | 720p/480p | 5s |
+| `2.0-pro` | 720p/480p | 5s |
+
+---
+
+## 前置条件
+
+- Python 3.10+
+- 即梦账号（[jimeng.jianying.com](https://jimeng.jianying.com) 注册，每日赠送免费积分）
+- 从浏览器获取 Cookie 中的 `sessionid`
+
+### 获取 sessionid
+
+1. 在 Chrome 中打开 [https://jimeng.jianying.com](https://jimeng.jianying.com) 并登录
+2. 按 `F12` → `Application` → `Cookies` → `jimeng.jianying.com`
+3. 找到 `sessionid`，复制其 Value
+
+```
+sessionid  ← 类似: a1b2c3d4e5f6...
+```
+
+---
+
+## 快速开始
 
 ```bash
-claude mcp add jimeng -- uvx --from git+https://github.com/NB4747/jimeng-tools.git jimeng-mcp
-```
-
-> 如果你 fork 了本项目，把 `NB4747/jimeng-tools` 换成你自己的 GitHub 用户名和仓库名。
-
-执行完毕后重启 Claude Code，MCP 服务即注册完成。
-
----
-
-## 🔑 登录配置（双轨制）
-
-### 方式 A：自动浏览器扫码（推荐）
-
-默认模式，**零配置**。首次触发图片生成时：
-
-1. 系统自动弹出一个独立的 Chrome 窗口，打开即梦首页。
-2. 在窗口中扫码登录你的即梦账号。
-3. 登录成功后，保持窗口在后台（关闭也可以，Session 会被记录在 `%LOCALAPPDATA%\jimeng_mcp_chrome_profile` 中）。
-4. 后续使用无需再次登录。
-
-> 如果你提前用 `--remote-debugging-port=9222` 启动了 Chrome，系统会优先复用该实例，不会另外弹窗。
-
-### 方式 B：环境变量静默模式（高级用户）
-
-适合服务器环境或不想弹窗的用户。设置环境变量后，程序进入 **完全无头（headless）模式**，全程零界面。
-
-```powershell
-# Windows PowerShell
-$env:JIMENG_COOKIE = "your_cookie_string_here"
-```
-
-```bash
-# Linux / macOS
-export JIMENG_COOKIE="your_cookie_string_here"
-```
-
-> **Cookie 获取方式**：在 Chrome 中按 F12 → Application → Cookies → jimeng.jianying.com，将需要的 cookie 复制拼接为 `name1=value1; name2=value2` 格式。
-
-设置后运行 MCP 服务，即可静默后台生成。
-
----
-
-## 🤖 使用示例
-
-在 Claude Code 中直接用大白话对话，工具会自动感知意图：
-
-| 你说的话 | Claude 的行为 |
-|----------|--------------|
-| "帮我画一只像素风的猫咪" | 自动调用 `generate_game_asset`，prompt 为 "pixel art cat, cute, 8-bit style" |
-| "用即梦生成一张赛博朋克城市夜景" | 自动生成 cyberpunk city night scene |
-| "做一个武侠风格的游戏背景" | 自动生成 wuxia game background |
-| "设计一个 Q 版头像，日系风格" | 自动生成 anime chibi avatar |
-| "generate a fantasy castle game asset" | 自动生成游戏素材 |
-
-你也可以直接指定工具：
-
-```
-/mcp 用 generate_game_asset 生成一张油画风格的森林狐狸
-```
-
----
-
-## 📁 项目结构
-
-```
-jimeng-mcp-bridge/
-├── pyproject.toml          # uv 项目配置，声明依赖与入口
-├── config.json             # CDP 端口、超时、下载路径等配置
-├── requirements.txt        # 传统 pip 依赖（供参考）
-├── README.md
-└── src/
-    ├── __init__.py
-    ├── main.py             # FastMCP 服务入口 + 双轨制登录逻辑
-    ├── jimeng_client.py    # Playwright CDP 核心控制 + 网络拦截
-    └── utils.py            # 异步图片下载
-```
-
----
-
-## ⚙️ 配置说明
-
-`config.json`：
-
-| 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `cdp_url` | string | `"http://localhost:9222"` | Chrome CDP 地址 |
-| `default_output_dir` | string | `"./downloads"` | 图片保存目录 |
-| `task_timeout` | number | `60` | 生图任务超时（秒） |
-| `api_patterns` | array | `["api/v1/task", ...]` | 拦截 API 的 URL 正则 |
-| `poll_interval` | number | `1.0` | 轮询间隔（秒） |
-
----
-
-## 🔧 本地开发
-
-```bash
-# 1. 克隆项目
-git clone https://github.com/NB4747/jimeng-tools.git
-cd jimeng-tools
+# 1. 克隆
+git clone git@github.com:NB4747/jimeng-free-tool-cli.git
+cd jimeng-free-tool-cli
 
 # 2. 安装依赖
-uv sync
+pip install httpx pillow rembg
 
-# 3. 启动 Chrome CDP（可选；不启动则自动弹窗）
-"C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="C:\ChromeProfileForAgent"
+# 3. 设置 Cookie
+# Windows
+set JIMENG_COOKIE=你的sessionid
 
-# 4. 注册到 Claude Code
-claude mcp add jimeng -- uv run jimeng-mcp
+# macOS / Linux
+export JIMENG_COOKIE=你的sessionid
+
+# 4. 测试
+python -c "
+import asyncio, os
+from src.jimeng_sdk import JimengClient
+
+async def main():
+    client = JimengClient(cookie=os.environ['JIMENG_COOKIE'], model='3.0', resolution='1k')
+    credits = await client.get_credits()
+    print(f'积分: {credits[\"total\"]}')
+
+    task_id = await client.generate_image('a red circle on white background')
+    url = await client.poll_task_status(task_id, timeout=120)
+    print(f'图片: {url}')
+    await client.close()
+
+asyncio.run(main())
+"
 ```
 
 ---
 
-## 📄 License
+## Claude Code MCP 部署
+
+### 一行命令免安装
+
+```bash
+claude mcp add jimeng -- uvx --from git+https://github.com/NB4747/jimeng-free-tool-cli.git jimeng-mcp
+```
+
+### 本地路径部署
+
+```bash
+claude mcp add jimeng -- py -3.12 "E:/your/path/jimeng-free-tool-cli/src/main.py"
+```
+
+### 环境变量配置
+
+在 `.env` 或系统环境变量中设置：
+
+```bash
+JIMENG_COOKIE=你的sessionid
+```
+
+### 多账号 Token 轮询配置
+
+如果有多个即梦账号，用逗号分隔多个 sessionid，SDK 自动 round-robin 轮询：
+
+```bash
+JIMENG_COOKIE=sid_account1
+JIMENG_TOKENS=sid_account1,sid_account2,sid_account3
+```
+
+部署后重启 Claude Code，即可在对话中使用：
+
+```
+"画一只像素风的猫"
+"把这个角色的背景去掉"
+"生成一段5秒的爆炸特效视频"
+"用这张草稿图生成同风格的变体"
+```
+
+---
+
+## Python SDK 用法
+
+### 文生图
+
+```python
+import asyncio, os
+from src.jimeng_sdk import JimengClient
+
+async def main():
+    client = JimengClient(
+        cookie=os.environ["JIMENG_COOKIE"],
+        model="4.5",          # 模型: 4.5 / 4.1 / 4.0 / 3.1 / 3.0 / 2.0pro
+        resolution="2k",      # 分辨率: 2k / 1k
+    )
+    task_id = await client.generate_image(
+        "pixel art dragon, 16-bit, vibrant colors",
+        aspect_ratio="16:9",  # 比例: 21:9/16:9/3:2/4:3/1:1/3:4/2:3/9:16
+    )
+    url = await client.poll_task_status(task_id, timeout=120)
+    print(f"Image: {url}")
+    await client.close()
+
+asyncio.run(main())
+```
+
+### 图生图（用参考图生成变体）
+
+```python
+task_id = await client.generate_image_to_image(
+    prompt="same style but wearing red armor",
+    reference="path/to/original.png",  # 本地路径 / URL / CDN image_uri
+    sample_strength=0.5,               # 参考强度 0-1
+)
+url = await client.poll_task_status(task_id)
+```
+
+### 文生视频
+
+```python
+task_id = await client.generate_video(
+    "a magical portal opening in a classroom",
+    ratio="16:9",
+    resolution="720p",
+    duration=5,           # 5 或 10 秒
+)
+# 视频生成比图片慢 (2-10 分钟)
+url = await client.poll_video_status(task_id, timeout=600)
+```
+
+### 图生视频（用首尾帧生成过渡动画）
+
+```python
+task_id = await client.generate_video_with_frames(
+    "smooth transition from day to night",
+    first_frame="path/to/first.png",   # 可选
+    end_frame="path/to/end.png",       # 可选
+    duration=5,
+)
+url = await client.poll_video_status(task_id, timeout=600)
+```
+
+### 上传图片到即梦 CDN
+
+```python
+from src.jimeng_upload import upload_to_jimeng
+
+image_uri = await upload_to_jimeng(
+    "C:/art/character.png",
+    cookie=os.environ["JIMENG_COOKIE"],
+)
+print(f"CDN URI: {image_uri}")
+# 可以传给 generate_image_to_image() 或 generate_video_with_frames()
+```
+
+### 多账号轮询
+
+```python
+client = JimengClient(
+    cookie="sid_main",                          # 主 token
+    tokens="sid_acc1,sid_acc2,sid_acc3",        # 轮询列表
+)
+# 每次 API 调用自动切换到下一个 token
+task_id = await client.generate_image("...")
+# 这次用 acc1
+task_id = await client.generate_image("...")
+# 这次用 acc2，以此类推
+```
+
+---
+
+## 游戏资产后处理
+
+```python
+from src.asset_processor import (
+    remove_background,
+    resize_to_game_standard,
+    process_to_game_asset,
+    GAME_STANDARDS,
+)
+
+# 读取图片
+with open("raw.png", "rb") as f:
+    raw = f.read()
+
+# 去背 → RGBA 透明 PNG
+transparent = remove_background(raw, alpha_matting=True)
+
+# 缩放到游戏标准尺寸（保比例，居中填透明）
+resized = resize_to_game_standard(transparent, (64, 64), pad_to_fit=True)
+
+# 一步到位：去背 + 缩放
+icon = process_to_game_asset(raw, preset="sprite")   # 256x256
+icon = process_to_game_asset(raw, preset="icon")     # 64x64
+
+# 支持的预设
+print(GAME_STANDARDS)
+# {'icon': (64,64), 'card': (128,128), 'sprite': (256,256),
+#  'portrait': (512,512), 'bg': (1024,1024), 'full': (2048,2048)}
+```
+
+---
+
+## 上传引擎
+
+`jimeng_upload.py` 实现了完整的 ByteDance CDN 上传链路：
+
+```
+本地文件 → CRC32 校验 → 获取 STS Token → AWS V4 签名
+→ imagex.bytedanceapi.com 申请上传 → 二进制上传
+→ CommitImageUpload → 返回 image_uri
+```
+
+支持三种输入格式：
+
+```python
+await upload_to_jimeng("C:/art/hero.png", cookie)           # 本地文件
+await upload_to_jimeng("https://example.com/img.jpg", cookie) # HTTP URL
+await upload_to_jimeng("data:image/png;base64,...", cookie)   # Base64
+```
+
+---
+
+## 配置参考
+
+### config.json
+
+```json
+{
+    "cdp_url": "http://localhost:9222",
+    "default_output_dir": "./downloads",
+    "task_timeout": 60,
+    "api_patterns": ["api/v1/task", "aigc_dream", "mweb/v1"],
+    "poll_interval": 1.0
+}
+```
+
+### 环境变量
+
+| 变量 | 必须 | 说明 |
+|------|:--:|------|
+| `JIMENG_COOKIE` | ✅ | 即梦 sessionid |
+| `JIMENG_TOKENS` | 否 | 多账号轮询，逗号分隔 |
+| `JIMENG_MODEL` | 否 | 默认模型，默认 `4.5` |
+| `JIMENG_RESOLUTION` | 否 | 默认分辨率，默认 `2k` |
+
+---
+
+## 项目结构
+
+```
+jimeng-free-tool-cli/
+├── README.md
+├── pyproject.toml              # pip install -e .  或  uv sync
+├── config.json                 # CDP + 超时 + API 模式
+├── requirements.txt            # 传统 pip 依赖
+└── src/
+    ├── main.py                 # MCP 服务入口 (4 个工具)
+    ├── jimeng_sdk.py           # 生产级 SDK (700+ 行)
+    ├── jimeng_upload.py        # CDN 上传引擎 (300+ 行)
+    ├── jimeng_api.py           # 底层 API 客户端
+    ├── jimeng_client.py        # Playwright 浏览器自动化 (备用)
+    ├── asset_processor.py      # rembg + Pillow 后处理
+    └── utils.py                # 异步下载
+```
+
+---
+
+## 常见问题
+
+### Q: 提示"积分不足"？
+
+A: 到 [jimeng.jianying.com](https://jimeng.jianying.com) 点击右上角积分图标领取每日免费积分。或使用 `model='3.0'` + `resolution='1k'` 经济模式。
+
+### Q: Cookie 多久过期？
+
+A: 通常 60 天。过期后重新从浏览器提取 sessionid。
+
+### Q: 视频生成为什么很慢？
+
+A: 视频生成需要 2-10 分钟，默认超时 20 分钟。这是即梦服务端处理时间，与 SDK 无关。
+
+### Q: 如何查看当前积分？
+
+```python
+credits = await client.get_credits()
+print(credits)  # {'gift': 94, 'purchase': 0, 'vip': 112, 'total': 206}
+```
+
+### Q: 可以不装 Playwright 吗？
+
+A: 可以。如果只使用 API 模式（设置 `JIMENG_COOKIE`），完全不需要 Playwright。Playwright 只在浏览器自动化的备用模式中使用。
+
+---
+
+## License
 
 MIT
