@@ -12,9 +12,12 @@
 - [前置条件](#前置条件)
 - [快速开始](#快速开始)
 - [Claude Code MCP 部署](#claude-code-mcp-部署)
+- [Claude Code 对话使用指南](#claude-code-对话使用指南)
+- [Claude Code × CCGS Agent 集成](#claude-code--ccgs-agent-集成)
 - [Python SDK 用法](#python-sdk-用法)
 - [游戏资产后处理](#游戏资产后处理)
 - [上传引擎](#上传引擎)
+- [MCP 工具参数参考](#mcp-工具参数参考)
 - [多账号轮询](#多账号轮询)
 - [配置参考](#配置参考)
 - [项目结构](#项目结构)
@@ -114,45 +117,240 @@ asyncio.run(main())
 
 ---
 
+---
+
 ## Claude Code MCP 部署
 
-### 一行命令免安装
+### 方式一：一行命令远程安装（推荐）
 
 ```bash
 claude mcp add jimeng -- uvx --from git+https://github.com/NB4747/jimeng-free-tool-cli.git jimeng-mcp
 ```
 
-### 本地路径部署
+> 把 `NB4747` 替换为你的 GitHub 用户名（如果你 fork 了仓库）。
+
+### 方式二：本地路径安装
 
 ```bash
 claude mcp add jimeng -- py -3.12 "E:/your/path/jimeng-free-tool-cli/src/main.py"
 ```
 
+### 方式三：配合 uv 项目安装
+
+```bash
+cd jimeng-free-tool-cli
+uv sync
+claude mcp add jimeng -- uv run jimeng-mcp
+```
+
 ### 环境变量配置
 
-在 `.env` 或系统环境变量中设置：
+在项目根目录创建 `.env` 文件（已在 `.gitignore` 中排除）：
 
 ```bash
 JIMENG_COOKIE=你的sessionid
 ```
 
-### 多账号 Token 轮询配置
-
-如果有多个即梦账号，用逗号分隔多个 sessionid，SDK 自动 round-robin 轮询：
+### 多账号轮询
 
 ```bash
-JIMENG_COOKIE=sid_account1
-JIMENG_TOKENS=sid_account1,sid_account2,sid_account3
+JIMENG_COOKIE=sid_main
+JIMENG_TOKENS=sid_acc1,sid_acc2,sid_acc3
 ```
 
-部署后重启 Claude Code，即可在对话中使用：
+### 验证部署
+
+```bash
+# 检查 MCP 服务是否注册成功
+claude mcp list
+
+# 查看 jimeng 服务详情
+claude mcp get jimeng
+```
+
+预期输出：
+```
+jimeng:
+  Status: ✓ Connected
+  Type: stdio
+  Command: py -3.12 .../src/main.py
+```
+
+---
+
+## Claude Code 对话使用指南
+
+> **重点**：部署完成后**重启 Claude Code**，工具即生效。以下所有对话示例均可直接使用，工具自动识别意图。
+
+### 场景一：直接文生图
+
+你不需要说"调用 generate_game_asset"，直接用大白话即可：
 
 ```
-"画一只像素风的猫"
-"把这个角色的背景去掉"
-"生成一段5秒的爆炸特效视频"
-"用这张草稿图生成同风格的变体"
+"画一只像素风的猫，16-bit 风格，橘色虎斑，白色背景"
 ```
+
+Claude 的实际执行流程：
+```
+1. 识别意图 "画一只..." → 匹配 trigger words
+2. 自动翻译为英文 prompt: "pixel art orange tabby cat, 16-bit style, white background"
+3. 调用 generate_game_asset(prompt="...")
+4. 等待即梦 API 返回图片 URL
+5. 下载图片到 ./downloads/
+6. 回复你: "图片已保存至 ./downloads/xxx.png"
+```
+
+### 场景二：指定技术参数
+
+```
+"生成一张游戏角色 Sprite，中性灰色调，48x48 像素，8 方向，用于 Godot AtlasTexture"
+
+"做一个 16:9 横屏的赛博朋克城市夜景，2K 分辨率"
+
+"画一个技能图标，24x24，要透明背景，放到 assets/ui/skill_icon.png"
+```
+
+Claude 会自动把尺寸、比例、路径等约束注入到工具参数中。
+
+### 场景三：游戏工作流对话（多轮交互）
+
+```
+你: "扫描一下我的游戏项目，看看缺哪些美术资源"
+
+Claude: [调用 AssetAuditorAgent 扫描代码]
+        "发现 3 个缺失资产：
+         1. assets/characters/hero.png (64x64 sprite) — 缺失
+         2. assets/tiles/grass.png (16x16 tile) — 缺失  
+         3. assets/ui/health_bar.png (256x16) — 缺失"
+
+你: "把这三个全生成出来"
+
+Claude: [依次调用 generate_game_asset × 3]
+        "全部生成完毕：
+         ✅ hero.png (64x64, RGBA)
+         ✅ grass.png (16x16, TileSet ready)
+         ✅ health_bar.png (256x16, NinePatchRect ready)"
+```
+
+### 场景四：资产迭代与微调
+
+```
+你: "这个角色的背景没去干净，帮我处理一下"
+
+Claude: [读取图片 → 调用 asset_processor.remove_background()]
+        "已处理，去背后保存为 hero_no_bg.png"
+```
+
+```
+你: "用这张 boss.png 做参考，生成一个红色盔甲版本的变体"
+
+Claude: [上传 boss.png → 调用 generate_image_variation()]
+        "变体已生成 → boss_red_armor.png"
+```
+
+### 场景五：视频生成
+
+> ⚠️ 视频消耗积分较多，建议确认需求后再执行。
+
+```
+你: "生成一段 5 秒的魔法传送门特效视频，16:9，适合做过场动画"
+
+Claude: [调用 generate_video_asset]
+        "视频任务已提交 (task_id=xxx)，预计 2-5 分钟..."
+        "视频已保存至 ./downloads/portal_cutscene.mp4"
+```
+
+```
+你: "用这张教室照片做首帧，这张走廊照片做尾帧，生成过渡视频"
+
+Claude: [上传两张图 → 调用 generate_video_with_frames]
+        "图生视频完成 → classroom_to_hallway.mp4"
+```
+
+### 场景六：批量资产生产
+
+```
+你: "我需要一套完整的 RPG 道具包：
+     1. 红色血瓶 (16x16)
+     2. 蓝色魔法瓶 (16x16)
+     3. 铁剑 (32x32)
+     4. 木盾 (32x32)
+     5. 金色钥匙 (16x16)
+     全部去背，放到 assets/items/ 下面"
+
+Claude: [自动循环 5 次]
+        "5 个道具全部生成并去背完毕：
+         ✅ assets/items/health_potion.png
+         ✅ assets/items/mana_potion.png
+         ✅ assets/items/iron_sword.png
+         ✅ assets/items/wooden_shield.png
+         ✅ assets/items/golden_key.png"
+```
+
+### 自动意图识别关键字
+
+以下任意说法都能触发 MCP 工具自动调用：
+
+| 类别 | 触发词 |
+|------|--------|
+| 文生图 | 画 / 生成图片 / 做图 / 创作 / 设计 / sprite / asset / icon / background / texture / pixel art |
+| 图生图 | 参考这张图 / 基于这张 / 变体 / 换个颜色 / 改风格 / variation |
+| 视频 | 生成视频 / 做动画 / 过场 / cutscene / 特效视频 / 动态背景 |
+| 去背 | 去背景 / 扣图 / 透明 / remove background / alpha channel |
+| 缩放 | 缩放 / resize / 改成 xx像素 / 64x64 |
+
+### 积分管理对话
+
+```
+你: "我还有多少积分？"
+
+Claude: [调用 get_credits()]
+        "当前积分: 206 (VIP 112 + 赠送 94)"
+```
+
+### 输出路径规则
+
+Claude 会根据上下文自动推断保存路径：
+
+| 你说 | 保存到 |
+|------|--------|
+| "画一只猫" | `./downloads/画一只猫.png` |
+| "存到 assets/player.png" | `assets/player.png` |
+| "生成角色，放到 characters/hero" | `characters/hero.png` |
+| 不指定路径 | `./downloads/<prompt前80字>.png` |
+
+### 错误处理对话
+
+```
+你: "画一只猫"
+
+Claude: "【错误】即梦积分不足，请前往 https://jimeng.jianying.com 领取每日积分。"
+        "当前积分: 0。是否需要我切换到经济模式重试？"
+
+你: "用经济模式"
+
+Claude: [切换 model='3.0', resolution='1k']
+        "已切换。经济模式每次约消耗 1 积分。正在重试..."
+```
+
+---
+
+## Claude Code × CCGS Agent 集成
+
+如果你同时安装了 [Claude-Code-Game-Studios](https://github.com/NB4747/jimeng-tools) 框架，可以获得更专业的 Agent 协作体验：
+
+```
+# 注册即梦工具
+claude mcp add jimeng -- py -3.12 ".../src/main.py"
+
+# CCGS 的 Agent 会自动发现 jimeng 工具并协作
+/asset-spec          # Art Director: 扫描缺口 + 扩写 prompt + 批量规划
+/map-systems 教室    # Level Designer: 规划 TileSet 物理层
+/consistency-check   # VFX Artist: 校验动画帧率 + Spritesheet 网格
+/smoke-check         # QA Lead: 验证生成资产尺寸/透明/路径
+```
+
+详细的 CCGS Agent 使用指南见 [.claude/tasks/generate_art_pipeline.md](https://github.com/NB4747/jimeng-tools/blob/main/.claude/tasks/generate_art_pipeline.md)。
 
 ---
 
@@ -229,6 +427,50 @@ image_uri = await upload_to_jimeng(
 print(f"CDN URI: {image_uri}")
 # 可以传给 generate_image_to_image() 或 generate_video_with_frames()
 ```
+
+---
+
+## MCP 工具参数参考
+
+> 以下为 4 个注册工具的完整参数表。Claude 调用时自动填参。
+
+### `generate_game_asset` — 文生图
+
+| 参数 | 类型 | 必须 | 默认值 | 说明 |
+|------|------|:--:|--------|------|
+| `prompt` | string | ✅ | — | 自然语言画面描述（中英文均可） |
+| `output_path` | string | 否 | `./downloads/<prompt>.png` | 保存路径 |
+
+### `generate_image_variation` — 图生图
+
+| 参数 | 类型 | 必须 | 默认值 | 说明 |
+|------|------|:--:|--------|------|
+| `prompt` | string | ✅ | — | 目标画面描述 |
+| `reference_path` | string | ✅ | — | 参考图路径（本地文件/URL/Base64） |
+| `output_path` | string | 否 | `./downloads/<prompt>.png` | 保存路径 |
+
+### `generate_video_asset` — 文生视频
+
+| 参数 | 类型 | 必须 | 默认值 | 说明 |
+|------|------|:--:|--------|------|
+| `prompt` | string | ✅ | — | 视频描述 |
+| `duration` | int | 否 | `5` | 时长：5 或 10 秒 |
+| `ratio` | string | 否 | `"16:9"` | 比例：16:9/9:16/1:1/4:3/3:4/21:9 |
+| `resolution` | string | 否 | `"720p"` | 分辨率：1080p/720p/480p |
+| `output_path` | string | 否 | `./downloads/<prompt>.mp4` | 保存路径 |
+
+### `generate_video_with_frames` — 图生视频
+
+| 参数 | 类型 | 必须 | 默认值 | 说明 |
+|------|------|:--:|--------|------|
+| `prompt` | string | ✅ | — | 视频描述 |
+| `first_frame` | string | 否 | `""` | 首帧图路径（本地/URL） |
+| `end_frame` | string | 否 | `""` | 尾帧图路径（本地/URL） |
+| `duration` | int | 否 | `5` | 时长：5 或 10 秒 |
+| `ratio` | string | 否 | `"16:9"` | 比例 |
+| `output_path` | string | 否 | `./downloads/<prompt>.mp4` | 保存路径 |
+
+---
 
 ### 多账号轮询
 
